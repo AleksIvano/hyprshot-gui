@@ -16,7 +16,7 @@ Soon
 - Manual
 
 ```bash
-git clone https://github.com/ThatOneCalculator/hyprshot-gui.git && cd hyprshot-gui 
+git clone https://github.com/AleksIvano/hyprshot-gui.git && cd hyprshot-gui 
 sudo cp ./hyprshot-gui /usr/local/bin/
 sudo cp ./hyprshot-gui.desktop /usr/local/share/applications/
 ```
