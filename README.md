@@ -4,6 +4,8 @@
 
 - zenity
 - hyprshot
+- tesseract
+- tesseract-data-eng
 
 ## Install
 
