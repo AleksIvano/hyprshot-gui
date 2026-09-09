@@ -5,7 +5,7 @@
 - zenity
 - hyprshot
 - tesseract
-- tesseract-data-eng (download other language packs if you intend to use it for different languages)
+- tesseract-data-eng (download other language packs if you intend to use it for a different languages)
 
 ## Install
 
