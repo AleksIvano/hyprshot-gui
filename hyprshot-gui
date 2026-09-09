@@ -1,13 +1,64 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-OPTION=()
+# hyprshot-gui - GUI wrapper for hyprshot with OCR support
+# Depends: zenity, hyprshot, tesseract, imagemagick, jq
 
+OCR_DIR="/tmp/hyprshot-ocr-$$"
+OCR_IMG="$OCR_DIR/capture.png"
+OCR_TXT="$OCR_DIR/capture.txt"
+
+ocr_capture() {
+    mkdir -p "$OCR_DIR"
+
+    hyprshot -m region -f capture.png -o "$OCR_DIR" --silent
+
+    # Wait for hyprshot's background grim to finish writing
+    for i in $(seq 1 20); do
+        [ -s "$OCR_IMG" ] && break
+        sleep 0.1
+    done
+
+    if [ ! -s "$OCR_IMG" ]; then
+        zenity --info --title="Cancelled" --text="No region selected."
+        return
+    fi
+
+    # Grayscale + upscale
+    mogrify -colorspace Gray -resize 400% "$OCR_IMG"
+
+    # Invert if background is dark (white text on black)
+    local mean
+    mean=$(magick "$OCR_IMG" -format "%[fx:int(mean*255)]" info: 2>/dev/null)
+    if [ "$mean" -lt 128 ]; then
+        mogrify -negate "$OCR_IMG"
+    fi
+
+    tesseract "$OCR_IMG" "$OCR_DIR/capture" --psm 6 2>/dev/null
+
+    if [ -s "$OCR_TXT" ]; then
+        zenity --text-info \
+            --title="OCR Result" \
+            --width=600 \
+            --height=400 \
+            --filename="$OCR_TXT" \
+            --ok-label="Close"
+
+        wl-copy < "$OCR_TXT" 2>/dev/null
+        notify-send "OCR Complete" "Text extracted and copied to clipboard." -i "text-editor"
+    else
+        zenity --error \
+            --title="OCR Failed" \
+            --text="No text detected in the captured region.\n\nTips:\n• Make sure text is large enough\n• Try a higher-resolution source"
+    fi
+}   
+
+# --- Main dialog (matches original hyprshot-gui layout) ---
 values=$(zenity \
     --title="Hyprshot GUI" \
     --text="Options" \
     --forms \
     --add-combo="Mode [default: whole screen]" \
-    --combo-values="Whole screen|Specific window|Specific area" \
+    --combo-values="Whole screen|Specific window|Specific area|Text Capture (OCR)" \
     --add-entry="Time to wait [default: 0s]" \
     --add-combo="Save to [default: both]" \
     --combo-values="Clipboard and file|Clipboard only" \
@@ -17,51 +68,55 @@ values=$(zenity \
     --combo-values="~/Pictures/Screenshots|Select directory" \
 ) 2>/dev/null
 
-result=$?
-
-mode=$(echo $values | cut -d '|' -f 1)
-wait=$(echo $values | cut -d '|' -f 2)
-clipboard=$(echo $values | cut -d '|' -f 3)
-monitor=$(echo $values | cut -d '|' -f 4)
-directory=$(echo $values | cut -d '|' -f 5)
-
-if [ "$result" -eq 1 ]; then  # select cancel
-    echo "Cancelled"
-    exit
+if [ $? -ne 0 ] || [ -z "$values" ]; then
+    exit 0
 fi
 
-if [ "$directory" == "Select directory" ]; then
-    FILEDIR=$(zenity --file-selection --directory --title="Choose directory to save screenshot")
+IFS='|' read -r MODE DELAY SAVE_MODE MONITOR DIR <<< "$values"
 
-    if [ "$?" -eq 1 ]; then
-        FILEDIR="$HOME/Pictures/Screenshots"
-    fi
-else
-    FILEDIR="$HOME/Pictures/Screenshots"
-fi
+# --- Build hyprshot args ---
+HYPRSHOT_ARGS=""
 
+case "$MODE" in
+    "Whole screen")
+        HYPRSHOT_ARGS="-m output"
+        [ -n "$MONITOR" ] && [ "$MONITOR" != "$(hyprctl -j monitors | jq -r '.[0].name')" ] && HYPRSHOT_ARGS="$HYPRSHOT_ARGS -m $MONITOR"
+        ;;
+    "Specific window")
+        HYPRSHOT_ARGS="-m window"
+        ;;
+    "Specific area")
+        HYPRSHOT_ARGS="-m region"
+        ;;
+    "Text Capture (OCR)")
+        # Handle delay if set
+        if [ -n "$DELAY" ] && [ "$DELAY" -gt 0 ] 2>/dev/null; then
+            sleep "$DELAY"
+        fi
+        ocr_capture
+        exit 0
+        ;;
+esac
 
-if [ ! -z "$wait" ]; then
-    sleep $wait
-fi
+# --- Apply optional flags ---
+[ -n "$DELAY" ] && [ "$DELAY" -gt 0 ] 2>/dev/null && HYPRSHOT_ARGS="$HYPRSHOT_ARGS -D $DELAY"
 
-FILENAME="Screenshot_$(date +%F_%H.%M.%S).png"
+case "$SAVE_MODE" in
+    "Clipboard only")
+        HYPRSHOT_ARGS="$HYPRSHOT_ARGS --clipboard-only"
+        ;;
+esac
 
-if [ "$mode" == "Specific window" ]; then  # select specify window
-    MODE_OPTION="-m window"
-elif [ "$mode" == "Specific area" ]; then  # select specfy area
-    MODE_OPTION="-m region"
-else
-    MODE_OPTION="-m output"
-fi
+case "$DIR" in
+    "Select directory")
+        SAVE_DIR=$(zenity --file-selection --directory --title="Select directory")
+        [ -n "$SAVE_DIR" ] && HYPRSHOT_ARGS="$HYPRSHOT_ARGS -o $SAVE_DIR"
+        ;;
+    *)
+        SAVE_DIR="${DIR/#\~/$HOME}"
+        [ -n "$SAVE_DIR" ] && HYPRSHOT_ARGS="$HYPRSHOT_ARGS -o $SAVE_DIR"
+        ;;
+esac
 
-if [ ! -z "$monitor" ]; then
-    MODE_OPTION+=(" -m $monitor")
-fi
-
-
-if [ "$clipboard" == "Clipboard only" ]; then
-    hyprshot $MODE_OPTION --clipboard-only
-else
-    hyprshot $MODE_OPTION -o $FILEDIR -f $FILENAME
-fi
+# --- Execute ---
+hyprshot $HYPRSHOT_ARGS   
