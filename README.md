@@ -9,10 +9,6 @@
 
 ## Install
 
-- Arch Linux (AUR)
-
-Soon
-
 - Manual
 
 ```bash
